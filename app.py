@@ -8,8 +8,10 @@ import pandas_ta as pta
 
 # Function to compute QQE components from Pine Script translation
 def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
+    if df.empty or 'Close' not in df.columns:
+        return pd.Series(), pd.Series(), pd.Series()
     close = df['Close']
-    rsi_val = pta.rsi(close, length=rsi_period)
+    rsi_val = pta.rsi(close, length=rsi_period, talib=False)
     rsi_ma = pta.ema(rsi_val, length=sf, talib=False)
     atr_rsi = np.abs(rsi_ma.shift(1) - rsi_ma)
     wilders_period = rsi_period * 2 - 1
@@ -45,12 +47,16 @@ def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
 
 # Function to get data and resample if needed
 def get_data(symbol, interval, period):
-    raw_df = yf.download(symbol, interval='1h' if interval == '4h' else interval, period=period)
-    if interval == '4h':
-        if not raw_df.empty:
+    try:
+        raw_df = yf.download(symbol, interval='1h' if interval == '4h' else interval, period=period, auto_adjust=True)
+        if raw_df.empty:
+            return raw_df
+        if interval == '4h':
             raw_df = raw_df.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
-        # Else, keep empty to trigger error later
-    return raw_df.dropna()
+        return raw_df.dropna()
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return pd.DataFrame()
 
 # App layout
 st.title("Trading Analysis App")
@@ -69,7 +75,7 @@ symbol = st.selectbox("Select Symbol", assets[category])
 timeframes = ['Hourly', '4 Hourly', 'Daily', 'Weekly']
 selected_tf = st.selectbox("Select Timeframe for Chart", timeframes)
 interval_map = {'Hourly': '1h', '4 Hourly': '4h', 'Daily': '1d', 'Weekly': '1wk'}
-period_map = {'1h': '60d', '4h': '60d', '1d': '5y', '1wk': '10y'}  # Changed '4h' to '60d' to avoid data limits
+period_map = {'1h': '60d', '4h': '60d', '1d': '5y', '1wk': '10y'}
 df = get_data(symbol, interval_map[selected_tf], period_map[interval_map[selected_tf]])
 
 if df.empty:
@@ -112,7 +118,7 @@ else:
         if not df_tf.empty:
             _, _, trend_tf = compute_qqe_components(df_tf, 6, 5, 1.61)
             trend_str = "Bullish" if trend_tf[-1] == 1 else "Bearish"
-            pp = pta.pivotpoints(high=df_tf['High'], low=df_tf['Low'], close=df_tf['Close'], open=df_tf['Open'])
+            pp = pta.pivotpoints(high=df_tf['High'], low=df_tf['Low'], close=df_tf['Close'], open=df_tf['Open'], talib=False)
             support = pp['S1'][-1] if not np.isnan(pp['S1'][-1]) else "N/A"
             resistance = pp['R1'][-1] if not np.isnan(pp['R1'][-1]) else "N/A"
             data.append([tf, trend_str, support, resistance])
@@ -122,7 +128,7 @@ else:
     st.subheader("Price Action")
     last_candle_bullish = "Bullish" if df['Close'][-1] > df['Open'][-1] else "Bearish"
     st.write(f"Last Candle Trend: {last_candle_bullish}")
-    patterns = pta.cdl_pattern(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'])
+    patterns = pta.cdl_pattern(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'], talib=False)
     last_patterns = patterns.iloc[-1][patterns.iloc[-1] != 0]
     if not last_patterns.empty:
         pattern_list = []
@@ -165,7 +171,7 @@ else:
     st.subheader("Suggested Entry, Take Profit, Stop Loss (Based on Selected TF)")
     overall_trend = "Bullish" if trend2[-1] == 1 else "Bearish"
     current_price = df['Close'][-1]
-    pp_main = pta.pivotpoints(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'])
+    pp_main = pta.pivotpoints(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'], talib=False)
     support_main = pp_main['S1'][-1]
     resistance_main = pp_main['R1'][-1]
     if overall_trend == "Bullish":
