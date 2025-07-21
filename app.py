@@ -88,7 +88,7 @@ else:
     df['EMA20'] = pta.ema(df['Close'], length=20, talib=False)
     ema5 = pta.ema(df['Close'], length=5, talib=False)
     ema35 = pta.ema(df['Close'], length=35, talib=False)
-    df['EWO'] = ema5 - ema35 if ema5 is not None and ema35 is not None else pd.Series(np.nan, index=df.index)
+    df['EWO'] = ema5 - ema35 if ema5 is not None and ema35 is not None and not ema5.isna().all() and not ema35.isna().all() else pd.Series(np.nan, index=df.index)
     
     rsi_ma1, fast_tl1, trend1 = compute_qqe_components(df, 6, 5, 3)
     rsi_ma2, fast_tl2, trend2 = compute_qqe_components(df, 6, 5, 1.61)
