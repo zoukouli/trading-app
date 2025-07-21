@@ -1,7 +1,7 @@
 streamlit
 yfinance
 pandas
-numpy==1.26.4
+numpy
 plotly
-pandas_ta
+pandas-ta-openbb
 setuptools
