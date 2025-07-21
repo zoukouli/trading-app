@@ -1,0 +1,2 @@
+libta-lib0
+ta-lib0-dev
