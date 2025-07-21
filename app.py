@@ -10,11 +10,11 @@ import pandas_ta as pta
 def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
     close = df['Close']
     rsi_val = pta.rsi(close, length=rsi_period)
-    rsi_ma = pta.ema(rsi_val, length=sf)
+    rsi_ma = pta.ema(rsi_val, length=sf, talib=False)
     atr_rsi = np.abs(rsi_ma.shift(1) - rsi_ma)
     wilders_period = rsi_period * 2 - 1
-    ma_atr_rsi = pta.ema(atr_rsi, length=wilders_period)
-    dar = pta.ema(ma_atr_rsi, length=wilders_period) * qqe_factor
+    ma_atr_rsi = pta.ema(atr_rsi, length=wilders_period, talib=False)
+    dar = pta.ema(ma_atr_rsi, length=wilders_period, talib=False) * qqe_factor
     longband = pd.Series(np.nan, index=df.index)
     shortband = pd.Series(np.nan, index=df.index)
     trend = pd.Series(np.nan, index=df.index)
@@ -47,7 +47,9 @@ def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
 def get_data(symbol, interval, period):
     raw_df = yf.download(symbol, interval='1h' if interval == '4h' else interval, period=period)
     if interval == '4h':
-        raw_df = raw_df.resample('4H').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
+        if not raw_df.empty:
+            raw_df = raw_df.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
+        # Else, keep empty to trigger error later
     return raw_df.dropna()
 
 # App layout
@@ -67,16 +69,16 @@ symbol = st.selectbox("Select Symbol", assets[category])
 timeframes = ['Hourly', '4 Hourly', 'Daily', 'Weekly']
 selected_tf = st.selectbox("Select Timeframe for Chart", timeframes)
 interval_map = {'Hourly': '1h', '4 Hourly': '4h', 'Daily': '1d', 'Weekly': '1wk'}
-period_map = {'1h': '60d', '4h': '6mo', '1d': '5y', '1wk': '10y'}
+period_map = {'1h': '60d', '4h': '60d', '1d': '5y', '1wk': '10y'}  # Changed '4h' to '60d' to avoid data limits
 df = get_data(symbol, interval_map[selected_tf], period_map[interval_map[selected_tf]])
 
 if df.empty:
     st.error("No data available for this symbol and timeframe.")
 else:
     # Compute indicators
-    df['EMA8'] = pta.ema(df['Close'], length=8)
-    df['EMA20'] = pta.ema(df['Close'], length=20)
-    df['EWO'] = pta.ema(df['Close'], length=5) - pta.ema(df['Close'], length=35)
+    df['EMA8'] = pta.ema(df['Close'], length=8, talib=False)
+    df['EMA20'] = pta.ema(df['Close'], length=20, talib=False)
+    df['EWO'] = pta.ema(df['Close'], length=5, talib=False) - pta.ema(df['Close'], length=35, talib=False)
     
     rsi_ma1, fast_tl1, trend1 = compute_qqe_components(df, 6, 5, 3)
     rsi_ma2, fast_tl2, trend2 = compute_qqe_components(df, 6, 5, 1.61)
