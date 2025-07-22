@@ -4,51 +4,17 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pandas_ta as pta
 
-# Manual EMA function
-def manual_ema(series, length):
-    if len(series) < length:
-        return pd.Series(np.nan, index=series.index)
-    alpha = 2 / (length + 1)
-    ema = series.copy()
-    ema.iloc[:length] = ema.iloc[:length].mean()
-    for i in range(length, len(series)):
-        ema.iloc[i] = (series.iloc[i] * alpha) + (ema.iloc[i-1] * (1 - alpha))
-    return ema
-
-# Manual RSI function
-def manual_rsi(series, length):
-    if len(series) < length:
-        return pd.Series(np.nan, index=series.index)
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=length, min_periods=length).mean()
-    avg_loss = loss.rolling(window=length, min_periods=length).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-# Manual pivot points function
-def manual_pivotpoints(high, low, close, open_):
-    pp = (high + low + close) / 3
-    r1 = 2 * pp - low
-    s1 = 2 * pp - high
-    return pd.DataFrame({'S1': s1, 'R1': r1}, index=high.index)
-
-# Function to compute QQE components from Pine Script translation (using manual RSI and EMA)
+# Function to compute QQE components from Pine Script translation
 def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
-    if df.empty or 'Close' not in df.columns or len(df) < max(rsi_period, sf, qqe_factor):
-        return pd.Series(), pd.Series(), pd.Series()
     close = df['Close']
-    rsi_val = manual_rsi(close, rsi_period)
-    rsi_ma = manual_ema(rsi_val, sf)
-    if rsi_ma.isna().all():
-        return pd.Series(), pd.Series(), pd.Series()
+    rsi_val = pta.rsi(close, length=rsi_period)
+    rsi_ma = pta.ema(rsi_val, length=sf, talib=False)
     atr_rsi = np.abs(rsi_ma.shift(1) - rsi_ma)
     wilders_period = rsi_period * 2 - 1
-    ma_atr_rsi = manual_ema(atr_rsi, wilders_period)
-    dar = manual_ema(ma_atr_rsi, wilders_period) * qqe_factor
+    ma_atr_rsi = pta.ema(atr_rsi, length=wilders_period, talib=False)
+    dar = pta.ema(ma_atr_rsi, length=wilders_period, talib=False) * qqe_factor
     longband = pd.Series(np.nan, index=df.index)
     shortband = pd.Series(np.nan, index=df.index)
     trend = pd.Series(np.nan, index=df.index)
@@ -79,16 +45,12 @@ def compute_qqe_components(df, rsi_period=6, sf=5, qqe_factor=3):
 
 # Function to get data and resample if needed
 def get_data(symbol, interval, period):
-    try:
-        raw_df = yf.download(symbol, interval='1h' if interval == '4h' else interval, period=period)
-        if raw_df.empty:
-            return raw_df
-        if interval == '4h':
+    raw_df = yf.download(symbol, interval='1h' if interval == '4h' else interval, period=period)
+    if interval == '4h':
+        if not raw_df.empty:
             raw_df = raw_df.resample('4h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
-        return raw_df.dropna()
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return pd.DataFrame()
+        # Else, keep empty to trigger error later
+    return raw_df.dropna()
 
 # App layout
 st.title("Trading Analysis App")
@@ -107,16 +69,16 @@ symbol = st.selectbox("Select Symbol", assets[category])
 timeframes = ['Hourly', '4 Hourly', 'Daily', 'Weekly']
 selected_tf = st.selectbox("Select Timeframe for Chart", timeframes)
 interval_map = {'Hourly': '1h', '4 Hourly': '4h', 'Daily': '1d', 'Weekly': '1wk'}
-period_map = {'1h': '60d', '4h': '60d', '1d': '5y', '1wk': '10y'}
+period_map = {'1h': '60d', '4h': '60d', '1d': '5y', '1wk': '10y'}  # Changed '4h' to '60d' to avoid data limits
 df = get_data(symbol, interval_map[selected_tf], period_map[interval_map[selected_tf]])
 
 if df.empty:
     st.error("No data available for this symbol and timeframe.")
 else:
     # Compute indicators
-    df['EMA8'] = manual_ema(df['Close'], 8)
-    df['EMA20'] = manual_ema(df['Close'], 20)
-    df['EWO'] = manual_ema(df['Close'], 5) - manual_ema(df['Close'], 35)
+    df['EMA8'] = pta.ema(df['Close'], length=8, talib=False)
+    df['EMA20'] = pta.ema(df['Close'], length=20, talib=False)
+    df['EWO'] = pta.ema(df['Close'], length=5, talib=False) - pta.ema(df['Close'], length=35, talib=False)
     
     rsi_ma1, fast_tl1, trend1 = compute_qqe_components(df, 6, 5, 3)
     rsi_ma2, fast_tl2, trend2 = compute_qqe_components(df, 6, 5, 1.61)
@@ -150,7 +112,7 @@ else:
         if not df_tf.empty:
             _, _, trend_tf = compute_qqe_components(df_tf, 6, 5, 1.61)
             trend_str = "Bullish" if trend_tf[-1] == 1 else "Bearish"
-            pp = manual_pivotpoints(df_tf['High'], df_tf['Low'], df_tf['Close'], df_tf['Open'])
+            pp = pta.pivotpoints(high=df_tf['High'], low=df_tf['Low'], close=df_tf['Close'], open=df_tf['Open'])
             support = pp['S1'][-1] if not np.isnan(pp['S1'][-1]) else "N/A"
             resistance = pp['R1'][-1] if not np.isnan(pp['R1'][-1]) else "N/A"
             data.append([tf, trend_str, support, resistance])
@@ -160,11 +122,14 @@ else:
     st.subheader("Price Action")
     last_candle_bullish = "Bullish" if df['Close'][-1] > df['Open'][-1] else "Bearish"
     st.write(f"Last Candle Trend: {last_candle_bullish}")
-    # Basic candle pattern detection (example: engulfing, can add more if needed)
-    last_candle = df.iloc[-1]
-    prev_candle = df.iloc[-2]
-    if (last_candle['Close'] > prev_candle['Open'] and last_candle['Open'] < prev_candle['Close']) or (last_candle['Close'] < prev_candle['Open'] and last_candle['Open'] > prev_candle['Close']):
-        st.write("Detected Candle Pattern: Engulfing (Bullish or Bearish based on direction)")
+    patterns = pta.cdl_pattern(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'])
+    last_patterns = patterns.iloc[-1][patterns.iloc[-1] != 0]
+    if not last_patterns.empty:
+        pattern_list = []
+        for name, val in last_patterns.items():
+            pattern_trend = "Bullish" if val > 0 else "Bearish"
+            pattern_list.append(f"{name}: {pattern_trend}")
+        st.write("Detected Candle Patterns: " + ", ".join(pattern_list))
     else:
         st.write("No specific candle patterns detected in the last bar.")
     
@@ -200,7 +165,7 @@ else:
     st.subheader("Suggested Entry, Take Profit, Stop Loss (Based on Selected TF)")
     overall_trend = "Bullish" if trend2[-1] == 1 else "Bearish"
     current_price = df['Close'][-1]
-    pp_main = manual_pivotpoints(df['High'], df['Low'], df['Close'], df['Open'])
+    pp_main = pta.pivotpoints(high=df['High'], low=df['Low'], close=df['Close'], open=df['Open'])
     support_main = pp_main['S1'][-1]
     resistance_main = pp_main['R1'][-1]
     if overall_trend == "Bullish":
