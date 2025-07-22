@@ -3,5 +3,3 @@ yfinance
 pandas
 numpy
 plotly
-pandas-ta-openbb
-setuptools
