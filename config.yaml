@@ -1,0 +1,111 @@
+# Reversal strategy configuration. Every threshold lives here.
+# Tolerance "specs" are {mode, value} with mode one of:
+#   ticks (value × tick_size) | atr (value × ATR at the decision bar) | pct (value × price) | price (absolute)
+# A test (tests/test_config.py) checks this file matches the defaults in reversal_lab/config.py.
+
+instrument:
+  symbol: BTCUSDT
+  tick_size: 0.01          # Binance BTCUSDT spot tick
+  point_value: 1.0         # P&L per 1.0 price move per unit (results are reported in R, so this is informational)
+
+data:
+  source: csv              # csv | synthetic
+  path: data/raw/BTCUSDT_5m.csv   # file or glob; TradingView exports and Binance downloads both work
+  timezone: UTC            # timezone of timestamps in the CSV if they carry no offset
+  start: null              # optional ISO date filters
+  end: null
+  synthetic:               # used when source: synthetic (random walk, no edge by construction)
+    days: 800
+    seed: 7
+    start_price: 30000.0
+    annual_vol: 0.6
+
+timeframe: 5min            # bar size the strategy runs on (finer data is resampled)
+
+session:                   # crypto trades 24/7, so the "day" is a convention
+  timezone: UTC
+  start: "00:00"           # session boundary: PDH/PDL, session high/low and VWAP reset here
+  entry_start: "00:00"     # new entries only when the signal bar closes inside this window
+  entry_end: "23:30"
+  min_bars_into_session: 6 # no signals in the first N bars of a session (session levels are immature)
+  min_prev_session_coverage: 0.9   # PDH/PDL unused if the previous session has <90% of its bars
+  flatten_at_session_end: true     # intraday: close any position on the session's last bar
+
+indicators:
+  atr_period: 14           # Wilder ATR on the bar timeframe
+  swing:                   # fractal swing points
+    left: 3                # pivot must be strictly beyond the 3 bars before it...
+    right: 3               # ...and at least equal to the 3 bars after it (confirmed only after these close)
+  ma:
+    type: sma              # sma | ema
+    period: 200
+    timeframe: 5min        # e.g. 1h for an hourly 200 MA (only completed hourly bars are used)
+  vwap:
+    price: typical         # typical ((H+L+C)/3) | close
+
+setups:
+  enabled: [pdh_pdl, session_extreme, vwap, ma]
+  priority: [pdh_pdl, session_extreme, vwap, ma]   # if several fire on the same bar, the first wins
+  near_tolerance: {mode: atr, value: 0.5}          # pattern extreme must be within this of the level
+  double:                                          # double top / bottom definition
+    peak_tolerance: {mode: atr, value: 0.25}       # |peak1 - peak2| <= this
+    min_bars_apart: 5                              # bars between the two pivots
+    max_bars_apart: 60
+    min_pullback: {mode: atr, value: 1.0}          # depth from the pattern extreme to the neckline
+    max_candidates: 5                              # how many earlier swings to try as the first peak
+  reversal:                                        # tertiary setups (VWAP, MA)
+    pattern: rejection                             # rejection (single swing tag) | double (same as above)
+    approach_bars: 12                              # look-back window before the touch...
+    approach_min_frac: 0.8                         # ...in which >=80% of closes were on the far side of the level
+    require_close_back: true                       # the swing bar must close back on the reversal side (within tolerance)
+
+entry:
+  trigger: neckline_break  # neckline_break | close_back_through_level | confirmation
+  trigger_offset: {mode: ticks, value: 0}          # extra distance beyond neckline/level required for the close
+  max_bars_to_trigger: 12                          # pattern expires if no trigger within N bars of confirmation
+
+exits:
+  stop_buffer: {mode: atr, value: 0.1}             # stop = pattern extreme ± buffer
+  min_stop: {mode: atr, value: 0.5}                # skip trades whose risk is smaller (costs would dominate)
+  max_stop: {mode: atr, value: 4.0}                # skip trades whose risk is larger
+  target:
+    mode: r_multiple       # r_multiple | vwap | opposite_level
+    r_multiple: 2.0
+  min_reward_risk: 1.0     # for vwap/opposite_level targets: skip if target is closer than this many R
+  target_fill: through     # through (price must trade 1 tick beyond the target) | touch
+  intrabar_priority: stop_first   # if one bar touches both stop and target: stop_first (conservative) | target_first
+  max_hold_bars: null      # optional time stop
+
+risk:
+  max_trades_per_day: 3    # one position at a time is always enforced
+
+costs:
+  slippage: {mode: pct, value: 0.0001}     # 1 bp adverse on every market fill (entries, stops, time exits)
+  commission: {mode: pct, value: 0.0005}   # 5 bp per side (typical perpetual-futures taker fee)
+
+evaluation:
+  in_sample_fraction: 0.6  # first 60% of the time span is in-sample (tuning), the rest is holdout
+  in_sample_end: null      # or an explicit date, e.g. "2025-01-01"
+  min_trades_for_evidence: 100
+  ledger_path: experiments/ledger.jsonl
+  baseline:
+    reps: 1000
+    seed: 42
+  bootstrap_reps: 5000
+  objective: expectancy    # expectancy | total_R | profit_factor
+  min_trades_for_selection: 30
+  walk_forward:
+    span: in_sample        # in_sample (keeps the holdout untouched) | all
+    train_days: 180
+    test_days: 60
+    step_days: 60
+  grid:                    # parameters searched during tuning (dotted keys → list of values)
+    setups.double.peak_tolerance.value: [0.15, 0.25, 0.4]
+    entry.trigger: [neckline_break, close_back_through_level]
+    exits.target.r_multiple: [1.5, 2.0, 3.0]
+
+paper:
+  feed: replay             # replay | binance
+  log_dir: paper_logs
+  buffer_bars: 5000        # bars kept for indicator calculation in paper mode
+  poll_seconds: 20
